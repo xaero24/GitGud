@@ -1,0 +1,194 @@
+#!/bin/bash
+
+# TODO
+#Add checking for existing origin
+#
+
+#Script vars and flags
+helpFlag=false
+quietFlag=false
+badParams=false
+wrongPass=false
+timedOut=false
+
+currDir="$PWD"
+logFile="log_$(date +"%F_%H-%M-%S").txt"
+gitDirectory=""
+repoName=""
+
+#Credential checking procedure
+passCheck() {
+    wrongPass=false
+    echo "Enter GitHub username:"
+    read ghubUser
+    echo "Enter GitHub password:"
+    read ghubPass
+    resp=$(curl -is https://api.github.com -u "$ghubUser":"$ghubPass")
+    if [[ $resp == *"401"* ]]; then
+        echo "Wrong credentials passed. Try again"
+        wrongPass=true
+    elif [[ $resp == *"403"* ]]; then 
+        echo "Too many attempts. Try again in 30 minutes."
+        timedOut=true
+    else
+        if [[ $(curl -is -X GET https://api.github.com/users/$ghubUser/repos | grep name | grep $ghubPass) != "" ]]; then
+            echo "Repository already exists. Please link manually to avoid data loss."
+            exit 0
+        fi
+        #Make repo and redirect output to log file
+        curl -X POST -u "$ghubUser":"$ghubPass" -H 'Content-Type: application/json' -d '{ "name":"'"$repoName"'" }' https://api.github.com/user/repos --no-styled-output >> ~/.gitgud/"$logFile"
+        wait
+        if [ "$quietFlag" == true ]; then
+            echo "" >> ~/.gitgud/"$logFile" 
+            git remote add origin https://github.com/"$ghubUser"/"$repoName".git >> ~/.gitgud/"$logFile"
+        else
+            git remote add origin https://github.com/"$ghubUser"/"$repoName".git
+        fi
+        wait
+        if [ "$quietFlag" == true ]; then
+            echo "" >> ~/.gitgud/"$logFile"
+            git push -u origin master  >> ~/.gitgud/"$logFile"
+        else
+            git push -u origin master
+        fi
+    fi
+}
+
+if [ "$#" == 0 ]; then
+    helpFlag=true
+fi
+
+while [ "$#" != 0 ]; do 
+    case $1 in
+        -h|--help)
+            helpFlag=true
+            ;;
+        -q|--quiet)
+            quietFlag=true
+            ;;
+        *)
+            if [[ "$1" == [^-][a-zA-Z0-9]* ]]; then
+                gitDirectory="$1"
+                repoName=$(echo $gitDirectory | sed -e 's/[/]\([a-zA-Z]*[/]\)*//')
+            else
+                badParams=true
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [ "$badParams" = true ]; then
+    if [ "$quietFlag" == false ]; then
+        echo "Wrong parameters passed. See -h or --help for instructions."
+    else
+        echo -e "\nWrong parameters passed. See -h or --help for instructions." >> ~/.gitgud/"$logFile" 
+    fi
+    exit 1
+fi
+
+if [ "$helpFlag" == true ]; then
+    echo " "
+    echo "      Git Gud at setting GIT repos!"
+    echo "GitGud helps you to set up a working local and remote repository on GitHub."
+    echo "Running gitgud without parameters yields the same result as with -h or --help."
+    echo " "
+    echo "gitgud [-h | --help] OR [-q | --quiet] [REPO]"
+    echo " "
+    echo "-h/--help: Shows this help message"
+    echo "-q/--quiet: Omits error output to screen, instead redirecting it to the log file."
+    echo "REPO: Repository name. If no path is specified - creates in current working directory. Otherwise uses mkdir -p for path creation."
+    echo "Once the local repo is created, it is initialized with git init."
+    echo "A local directory ~/.gitgud is created for log files. These are sorted by date."
+    echo " "
+    echo "You will be asked for GitHub username and password - it will not be saved or logged so you'll use it every time you18 create a remote repository on GitHub with the same name as the local one, linking them aft18directed to log file."
+    echo "If18king is successful - a success message will be shown. Otherwise a failure message is print18 is deleted from the machine - but the path to it is left untouched."
+    echo " "
+    exit 0
+fi
+
+if [ ! -d "~/.gitgud" ]; then
+    if [ "$quietFlag" == true ]; then
+        echo "" >> ~/.gitgud/"$logFile" 
+        mkdir ~/.gitgud >> ~/.gitgud/"$logFile"
+    else
+        echo "Attempting to create .gitgud..."
+        mkdir ~/.gitgud
+        echo "Done creating .gitgud!"
+    fi
+        
+else
+    if [ "$quietFlag" == true ]; then
+        echo "" >> ~/.gitgud/"$logFile"
+        echo -e "\n.gitgud already exists." >> ~/.gitgud/"$logFile"
+    else
+        echo ".gitgud already exists."
+    fi
+fi
+
+touch ~/.gitgud/"$logFile"
+
+#Creating a local repository
+if [ ! -d "$gitDirectory" ]; then
+    echo "Attempting to create directory..."
+    if [[ $gitDirectory == [/][a-zA-Z0-9/]* ]] || [[ $gitDirectory == [~][a-zA-Z0-9/]* ]]; then
+        echo "Contains / or ~"
+        if [ "$quietFlag" == true ]; then
+            echo "" >> ~/.gitgud/"$logFile" 
+            mkdir -p "$gitDirectory" >> ~/.gitgud/"$logFile" 
+        else
+            mkdir -p "$gitDirectory"
+        fi
+    else
+        echo "Doesn't contain / or ~"
+        if [ "$quietFlag" == true ]; then
+            echo "" >> ~/.gitgud/"$logFile" 
+            mkdir -p "$PWD"/"$gitDirectory" >> ~/.gitgud/"$logFile"
+        else
+            mkdir -p "$PWD"/"$gitDirectory"
+        fi
+
+        gitDirectory="$PWD/$gitDirectory"
+
+        
+    fi
+    echo "Done creating DIR!"
+else
+    echo "Project with the name $gitDirectory already exists. Reinit? [y/n]"
+    read resp
+    case $resp in
+        y)
+            cd $gitDirectory
+            git init
+            ;;
+        n)
+            echo "Exiting..."
+            exit 0
+            ;;
+        *)
+            echo "Wrong answer, exiting..."
+            exit 1
+            ;;
+    esac
+fi
+
+echo "Attempting add and commit..."
+cd $gitDirectory
+git init
+echo "This repo was created via the GitGud script by xaero24" > README.md
+git add README.md
+git commit -m "Automatic script commit"
+echo "Done adding and committing!"
+
+passCheck
+while [ "$wrongPass" == true ]; do
+    passCheck
+    if [ "$timedOut" == true ]; then
+        cd ..
+        rmdir repoName
+        cd $currDir
+        exit 1
+    fi
+done
+
+cd $currDir
